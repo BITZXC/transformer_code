@@ -11,7 +11,7 @@ Building blocks for Transformer
 import numpy as np
 import tensorflow as tf
 
-def ln(inputs, epsilon = 1e-8, scope="ln"):
+def ln(inputs, epsilon = 1e-8, scope="ln"):#scope是tf变量的命名空间
     '''Applies layer normalization. See https://arxiv.org/abs/1607.06450.
     inputs: A tensor with 2 or more dimensions, where the first dimension has `batch_size`.
     epsilon: A floating number. A very small number for preventing ZeroDivision Error.
@@ -19,16 +19,18 @@ def ln(inputs, epsilon = 1e-8, scope="ln"):
       
     Returns:
       A tensor with the same shape and data dtype as `inputs`.
+      Layer Normalization
     '''
-    with tf.variable_scope(scope, reuse=tf.AUTO_REUSE):
-        inputs_shape = inputs.get_shape()
-        params_shape = inputs_shape[-1:]
+    with tf.variable_scope(scope, reuse=tf.AUTO_REUSE):#reuse:如果这个 scope 下已经存在同名变量，就直接复用它们；如果不存在，就创建新的
+        #with 规定了tf.variable_scope再此函数中的作用域
+        inputs_shape = inputs.get_shape()#[Batch_Size, Sequence_Length, d_model],d_model是每个token的编码维度
+        params_shape = inputs_shape[-1:]#以d_model为单位进行归一化
     
-        mean, variance = tf.nn.moments(inputs, [-1], keep_dims=True)
-        beta= tf.get_variable("beta", params_shape, initializer=tf.zeros_initializer())
+        mean, variance = tf.nn.moments(inputs, [-1], keep_dims=True)#只在最后一个维度（d_model上面计算均值）
+        beta= tf.get_variable("beta", params_shape, initializer=tf.zeros_initializer()) #维度1维[d_model]
         gamma = tf.get_variable("gamma", params_shape, initializer=tf.ones_initializer())
-        normalized = (inputs - mean) / ( (variance + epsilon) ** (.5) )
-        outputs = gamma * normalized + beta
+        normalized = (inputs - mean) / ( (variance + epsilon) ** (.5) )# 标准归一化
+        outputs = gamma * normalized + beta #加入可学习的特征缩放因子，gemma会自动复制扩充成[Batch_Size, Sequence_Length, d_model]，可变参数量不变
         
     return outputs
 
@@ -77,11 +79,14 @@ def scaled_dot_product_attention(Q, K, V, key_masks,
         outputs /= d_k ** 0.5
 
         # key masking
-        outputs = mask(outputs, key_masks=key_masks, type="key")
-
+        outputs = mask(outputs, key_masks=key_masks, type="key")#每个句子的token数不一样，把短的补充pad
+        '''
+        句子A: ["I", "love", "you", "<PAD>"]
+        句子B: ["Hello", "<PAD>", "<PAD>", "<PAD>"]
+        '''
         # causality or future blinding masking
         if causality:
-            outputs = mask(outputs, type="future")
+            outputs = mask(outputs, type="future")#模型在预测第 t 个词时，只能看到第t 个及之前的词，不能"偷看"后面的词。
 
         # softmax
         outputs = tf.nn.softmax(outputs)
@@ -91,7 +96,7 @@ def scaled_dot_product_attention(Q, K, V, key_masks,
         # # query masking
         # outputs = mask(outputs, Q, K, type="query")
 
-        # dropout
+        # dropout,表示每个位置有 dropout_rate的概率被置为 0,True 时才真正执行 Dropout
         outputs = tf.layers.dropout(outputs, rate=dropout_rate, training=training)
 
         # weighted sum (context vectors)
@@ -126,18 +131,11 @@ def mask(inputs, key_masks=None, type=None):
     padding_num = -2 ** 32 + 1
     if type in ("k", "key", "keys"):
         key_masks = tf.to_float(key_masks)
-        key_masks = tf.tile(key_masks, [tf.shape(inputs)[0] // tf.shape(key_masks)[0], 1]) # (h*N, seqlen)
+        key_masks = tf.tile(key_masks, [tf.shape(inputs)[0] // tf.shape(key_masks)[0], 1]) # 把 (N, seqlen) 扩展到 (h*N, seqlen)，让每个 head 共享同一份 mask。
         key_masks = tf.expand_dims(key_masks, 1)  # (h*N, 1, seqlen)
-        outputs = inputs + key_masks * padding_num
-    # elif type in ("q", "query", "queries"):
-    #     # Generate masks
-    #     masks = tf.sign(tf.reduce_sum(tf.abs(queries), axis=-1))  # (N, T_q)
-    #     masks = tf.expand_dims(masks, -1)  # (N, T_q, 1)
-    #     masks = tf.tile(masks, [1, 1, tf.shape(keys)[1]])  # (N, T_q, T_k)
-    #
-    #     # Apply masks to inputs
-    #     outputs = inputs*masks
-    elif type in ("f", "future", "right"):
+        outputs = inputs + key_masks * padding_num  #key_masks == 0  → 不加，保留原分数,key_masks == 1  → 加上 -4.29e9，屏蔽该位置，用于将空位变成-inf
+
+    elif type in ("f", "future", "right"):#把future的数据屏蔽掉，-inf
         diag_vals = tf.ones_like(inputs[0, :, :])  # (T_q, T_k)
         tril = tf.linalg.LinearOperatorLowerTriangular(diag_vals).to_dense()  # (T_q, T_k)
         future_masks = tf.tile(tf.expand_dims(tril, 0), [tf.shape(inputs)[0], 1, 1])  # (N, T_q, T_k)
@@ -178,7 +176,7 @@ def multihead_attention(queries, keys, values, key_masks,
         V = tf.layers.dense(values, d_model, use_bias=True) # (N, T_k, d_model)
         
         # Split and concat
-        Q_ = tf.concat(tf.split(Q, num_heads, axis=2), axis=0) # (h*N, T_q, d_model/h)
+        Q_ = tf.concat(tf.split(Q, num_heads, axis=2), axis=0) # (h*N, T_q, d_model/h)#多头注意力，相当于把d_model的特征维度拆分了
         K_ = tf.concat(tf.split(K, num_heads, axis=2), axis=0) # (h*N, T_k, d_model/h)
         V_ = tf.concat(tf.split(V, num_heads, axis=2), axis=0) # (h*N, T_k, d_model/h)
 
