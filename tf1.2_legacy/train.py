@@ -20,13 +20,14 @@ class Graph():
         with self.graph.as_default():
             if is_training:
                 self.x, self.y, self.num_batch = get_batch_data() # (N, T)
+                #y=(一批有多少句,每句有多少个 token),例如y[1,:]=[2,10,5,8,3,0,0]。这里只表示了字母表单词的索引，没经过embedding, 没有语义信息，cat=5, dog=6，5 和 6 相邻，不代表“猫”和“狗”语义相近
             else: # inference
                 self.x = tf.placeholder(tf.int32, shape=(None, hp.maxlen))
                 self.y = tf.placeholder(tf.int32, shape=(None, hp.maxlen))
 
-            # define decoder inputs
+            # define decoder inputs,每句开头插入一个 起始符:<S>，末尾去掉一个 token，实现右移一位
             self.decoder_inputs = tf.concat((tf.ones_like(self.y[:, :1])*2, self.y[:, :-1]), -1) # 2:<S>
-
+            
             # Load vocabulary    
             de2idx, idx2de = load_de_vocab()
             en2idx, idx2en = load_en_vocab()
@@ -139,11 +140,24 @@ class Graph():
                         self.dec = feedforward(self.dec, num_units=[4*hp.hidden_units, hp.hidden_units])
                 
             # Final linear projection
-            self.logits = tf.layers.dense(self.dec, len(en2idx))
-            self.preds = tf.to_int32(tf.arg_max(self.logits, dimension=-1))
-            self.istarget = tf.to_float(tf.not_equal(self.y, 0))
-            self.acc = tf.reduce_sum(tf.to_float(tf.equal(self.preds, self.y))*self.istarget)/ (tf.reduce_sum(self.istarget))
-            tf.summary.scalar('acc', self.acc)
+            self.logits = tf.layers.dense(self.dec, len(en2idx))#全连接层，self.dec（N,T,d_model） 到self.logits(N,T,Volcab) ,把每个token从特征向量，转换成字符表的打分值
+
+            
+            self.preds = tf.to_int32(tf.arg_max(self.logits, dimension=-1))#（N,T）在词汇表维度取最大值对应的索引，得到预测的 token id：
+
+            self.istarget = tf.to_float(tf.not_equal(self.y, 0))#（N,T）生成一个 0/1 掩码：self.y 中等于 0 的位置是 <pad>，标记为 0，非 0 的位置是真实 token，标记为 1
+
+            self.acc = tf.reduce_sum(tf.to_float(tf.equal(self.preds, self.y))*self.istarget)/ (tf.reduce_sum(self.istarget))#本批次，计算在非 padding 位置上，预测等于真实标签的比例
+
+            '''
+            tf.equal(self.preds, self.y):逐位置比较预测和真实标签。
+                 preds: [3, 5, 2, 0, 0]  y:     [3, 4, 2, 0, 0] → [True, False, True, True, True]
+            tf.to_float(...)：转成 float [1.0, 0.0, 1.0, 1.0, 1.0]
+            *self.istarget 将padding部位也变成0  [1.0, 0.0, 1.0, 0.0, 0.0]
+            tf.reduce_sum()/ (tf.reduce_sum(self.istarget)：计算在非 padding 位置上，预测等于真实标签的比例
+             '''
+            
+            tf.summary.scalar('acc', self.acc)# self.acc 注册成一个标量监控指标，方便在 TensorBoard 里看训练曲线。
                 
             if is_training:  
                 # Loss

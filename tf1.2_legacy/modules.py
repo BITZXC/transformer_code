@@ -38,84 +38,56 @@ def normalize(inputs,
         
     return outputs
 
-def embedding(inputs, 
-              vocab_size, 
-              num_units, 
-              zero_pad=True, 
+def embedding(inputs,
+              vocab_size,
+              num_units,
+              zero_pad=True,
               scale=True,
-              scope="embedding", 
+              scope="embedding",
               reuse=None):
-    '''Embeds a given tensor.
-
-    Args:
-      inputs: A `Tensor` with type `int32` or `int64` containing the ids
-         to be looked up in `lookup table`.
-      vocab_size: An int. Vocabulary size.
-      num_units: An int. Number of embedding hidden units.
-      zero_pad: A boolean. If True, all the values of the fist row (id 0)
-        should be constant zeros.
-      scale: A boolean. If True. the outputs is multiplied by sqrt num_units.
-      scope: Optional scope for `variable_scope`.
-      reuse: Boolean, whether to reuse the weights of a previous layer
-        by the same name.
-
-    Returns:
-      A `Tensor` with one more rank than inputs's. The last dimensionality
-        should be `num_units`.
-        
-    For example,
-    
-    ```
-    import tensorflow as tf
-    
-    inputs = tf.to_int32(tf.reshape(tf.range(2*3), (2, 3)))
-    outputs = embedding(inputs, 6, 2, zero_pad=True)
-    with tf.Session() as sess:
-        sess.run(tf.global_variables_initializer())
-        print sess.run(outputs)
-    >>
-    [[[ 0.          0.        ]
-      [ 0.09754146  0.67385566]
-      [ 0.37864095 -0.35689294]]
-
-     [[-1.01329422 -1.09939694]
-      [ 0.7521342   0.38203377]
-      [-0.04973143 -0.06210355]]]
-    ```
-    
-    ```
-    import tensorflow as tf
-    
-    inputs = tf.to_int32(tf.reshape(tf.range(2*3), (2, 3)))
-    outputs = embedding(inputs, 6, 2, zero_pad=False)
-    with tf.Session() as sess:
-        sess.run(tf.global_variables_initializer())
-        print sess.run(outputs)
-    >>
-    [[[-0.19172323 -0.39159766]
-      [-0.43212751 -0.66207761]
-      [ 1.03452027 -0.26704335]]
-
-     [[-0.11634696 -0.35983452]
-      [ 0.50208133  0.53509563]
-      [ 1.22204471 -0.96587461]]]    
-    ```    
     '''
+    将输入的 token id 查表映射为稠密向量（embedding）。
+
+    参数：
+      inputs:    int32/int64 类型的 Tensor，存放需要查找的 token id
+      vocab_size: 词汇表大小，即 embedding 矩阵的行数
+      num_units:  每个 token 对应的向量维度（隐藏单元数）
+      zero_pad:   是否把 id=0（通常代表 padding）对应的向量强制置为全 0
+      scale:      是否对输出乘以 sqrt(num_units)，与论文中的缩放一致
+      scope:      变量作用域名称
+      reuse:      是否复用同名作用域下已有的权重
+
+    返回：
+      比 inputs 多一维的 Tensor，最后一维大小为 num_units
+      例如 inputs shape 为 (N, T)，则输出 shape 为 (N, T, num_units)
+    '''
+
+    # 进入名为 scope 的变量作用域，reuse 控制是否复用已有变量
     with tf.variable_scope(scope, reuse=reuse):
+
+        # 创建可训练的 embedding 矩阵，形状为 (vocab_size, num_units)
+        # 使用 Xavier 初始化，让初始权重分布合理，避免梯度爆炸/消失
         lookup_table = tf.get_variable('lookup_table',
                                        dtype=tf.float32,
                                        shape=[vocab_size, num_units],
                                        initializer=tf.contrib.layers.xavier_initializer())
+
+        # 如果开启 zero_pad，把第 0 行（对应 padding token）替换为全 0 向量
+        # 这样当输入 id 为 0 时，查出来的向量也是 0，padding 不会引入噪声
         if zero_pad:
-            lookup_table = tf.concat((tf.zeros(shape=[1, num_units]),
-                                      lookup_table[1:, :]), 0)
+            lookup_table = tf.concat((tf.zeros(shape=[1, num_units]),   # 第 0 行全 0
+                                      lookup_table[1:, :]), 0)          # 保留第 1 行及之后
+
+        # 根据 inputs 中的 id 在 lookup_table 中查表，得到对应的向量
+        # 例如 inputs shape (N, T) → outputs shape (N, T, num_units)
         outputs = tf.nn.embedding_lookup(lookup_table, inputs)
-        
+
+        # 如果开启 scale，将输出乘以 sqrt(num_units)
+        # 目的是让词嵌入的幅值与位置编码的幅值量级匹配，相加时不会一方压倒另一方
         if scale:
-            outputs = outputs * (num_units ** 0.5) 
-            
+            outputs = outputs * (num_units ** 0.5)
+
     return outputs
-    
 
 def positional_encoding(inputs,
                         num_units,

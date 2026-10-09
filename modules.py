@@ -206,7 +206,7 @@ def ff(inputs, num_units, scope="positionwise_feedforward"):
     '''
     with tf.variable_scope(scope, reuse=tf.AUTO_REUSE):
         # Inner layer
-        outputs = tf.layers.dense(inputs, num_units[0], activation=tf.nn.relu)
+        outputs = tf.layers.dense(inputs, num_units[0], activation=tf.nn.relu)#num_units[0]代表输出维度
 
         # Outer layer
         outputs = tf.layers.dense(outputs, num_units[1])
@@ -250,6 +250,9 @@ def label_smoothing(inputs, epsilon=0.1):
         [ 0.93333334,  0.03333334,  0.03333334],
         [ 0.03333334,  0.93333334,  0.03333334]]], dtype=float32)]   
     ```    
+    标签平滑，防止过拟合
+    例如如果词汇表是V={a,b,c}，a=[1,0,0],b=[0,1,0],c=[0,0,1]
+    把标签a=[1,0,0]变成a=[[0.9333, 0.0333, 0.0333]]
     '''
     V = inputs.get_shape().as_list()[-1] # number of channels
     return ((1-epsilon) * inputs) + (epsilon / V)
